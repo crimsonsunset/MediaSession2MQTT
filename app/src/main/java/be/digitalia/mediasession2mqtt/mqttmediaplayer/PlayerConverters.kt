@@ -60,6 +60,16 @@ fun MediaMetadata?.toMediaTitle(): String {
 }
 
 /**
+ * Display subtitle, or empty when the session has none. Null metadata clears it.
+ */
+fun MediaMetadata?.toMediaSubtitle(): String {
+    if (this == null) {
+        return ""
+    }
+    return getString(MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE).orEmpty()
+}
+
+/**
  * Extract the media duration in milliseconds as a String, or return an empty String if unavailable.
  */
 fun MediaMetadata?.toMediaDurationInMillis(): String {
