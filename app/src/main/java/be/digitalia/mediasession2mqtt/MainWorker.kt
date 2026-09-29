@@ -15,7 +15,9 @@ import be.digitalia.mediasession2mqtt.mqttmediaplayer.MQTTMediaMetadata
 import be.digitalia.mediasession2mqtt.mqttmediaplayer.MQTTPlaybackState
 import be.digitalia.mediasession2mqtt.mqttmediaplayer.getPlayingPositionDrift
 import be.digitalia.mediasession2mqtt.mqttmediaplayer.toMQTTPlaybackStateOrNull
+import be.digitalia.mediasession2mqtt.accessibility.EpisodeOverlayState
 import be.digitalia.mediasession2mqtt.mqttmediaplayer.toMediaDurationInMillis
+import be.digitalia.mediasession2mqtt.mqttmediaplayer.toMediaSubtitle
 import be.digitalia.mediasession2mqtt.mqttmediaplayer.toMediaTitle
 import be.digitalia.mediasession2mqtt.service.MediaSessionListenerService
 import be.digitalia.mediasession2mqtt.settings.SettingsProvider
@@ -75,14 +77,21 @@ class MainWorker(
     private val mediaMetadataFlow: Flow<MQTTMediaMetadata> =
         currentMediaControllerDetector.currentMediaController.flatMapLatest { mediaController ->
             when (mediaController) {
-                null -> flowOf(MQTTMediaMetadata())
-                else -> mediaController.metadataFlow
-                    .map {
-                        MQTTMediaMetadata(
-                            title = it.toMediaTitle(),
-                            durationInMillis = it.toMediaDurationInMillis()
-                        )
-                    }
+                null -> {
+                    EpisodeOverlayState.sessionTitle = ""
+                    flowOf(MQTTMediaMetadata())
+                }
+                else -> combine(mediaController.metadataFlow, EpisodeOverlayState.episode) { metadata, episode ->
+                    val title = metadata.toMediaTitle()
+                    EpisodeOverlayState.sessionTitle = title
+                    val overlayEpisode = if (EpisodeOverlayState.boundTitle == title) episode else ""
+                    MQTTMediaMetadata(
+                        title = title,
+                        subtitle = metadata.toMediaSubtitle(),
+                        episode = overlayEpisode,
+                        durationInMillis = metadata.toMediaDurationInMillis()
+                    )
+                }
             }
         }.buffer(Channel.RENDEZVOUS)
 
@@ -188,6 +197,22 @@ class MainWorker(
                     title
                 )
             }
+            val subtitle = mediaMetadata.subtitle
+            if (previousMediaMetadata?.subtitle != subtitle) {
+                client.tryConnectAndPublish(
+                    qosLevel,
+                    "$ROOT_TOPIC/$deviceId/$MEDIA_SUBTITLE_SUB_TOPIC",
+                    subtitle
+                )
+            }
+            val episode = mediaMetadata.episode
+            if (previousMediaMetadata?.episode != episode) {
+                client.tryConnectAndPublish(
+                    qosLevel,
+                    "$ROOT_TOPIC/$deviceId/$MEDIA_EPISODE_SUB_TOPIC",
+                    episode
+                )
+            }
             val durationInMillis = mediaMetadata.durationInMillis
             if (previousMediaMetadata?.durationInMillis != durationInMillis) {
                 client.tryConnectAndPublish(
@@ -224,6 +249,8 @@ class MainWorker(
         private const val PLAYBACK_STATE_SUB_TOPIC = "playbackState"
         private const val PLAYBACK_POSITION_SUB_TOPIC = "playbackPosition"
         private const val MEDIA_TITLE_SUB_TOPIC = "mediaTitle"
+        private const val MEDIA_SUBTITLE_SUB_TOPIC = "mediaSubtitle"
+        private const val MEDIA_EPISODE_SUB_TOPIC = "mediaEpisode"
         private const val MEDIA_DURATION_SUB_TOPIC = "mediaDuration"
 
         private const val HASS_ROOT_TOPIC = "homeassistant"
@@ -253,6 +280,18 @@ class MainWorker(
                 serializedName = "media_title",
                 icon = "mdi:information",
                 subTopic = MEDIA_TITLE_SUB_TOPIC
+            ),
+            Sensor(
+                name = "Media Subtitle",
+                serializedName = "media_subtitle",
+                icon = "mdi:subtitles",
+                subTopic = MEDIA_SUBTITLE_SUB_TOPIC
+            ),
+            Sensor(
+                name = "Media Episode",
+                serializedName = "media_episode",
+                icon = "mdi:numeric",
+                subTopic = MEDIA_EPISODE_SUB_TOPIC
             ),
             Sensor(
                 name = "Media Duration",
